@@ -1,0 +1,89 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node
+        if: ${{ hashFiles('package.json') != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Node install and verify
+        if: ${{ hashFiles('package.json') != '' }}
+        run: |
+          set -euo pipefail
+          if [ -f pnpm-lock.yaml ]; then
+            corepack enable
+            pnpm install --frozen-lockfile
+            RUN="pnpm"
+          elif [ -f yarn.lock ]; then
+            yarn install --frozen-lockfile
+            RUN="yarn"
+          elif [ -f package-lock.json ]; then
+            npm ci
+            RUN="npm run"
+          else
+            npm install
+            RUN="npm run"
+          fi
+          has() {
+            node -e 'const s=require("./package.json").scripts||{}; process.exit(process.argv[1] in s?0:1)' "$1"
+          }
+          if [ "$RUN" = "pnpm" ]; then
+            if has lint; then pnpm lint; fi
+            if has typecheck; then pnpm typecheck; fi
+            if has test; then pnpm test; fi
+            if has build; then pnpm build; fi
+          elif [ "$RUN" = "yarn" ]; then
+            if has lint; then yarn lint; fi
+            if has typecheck; then yarn typecheck; fi
+            if has test; then yarn test; fi
+            if has build; then yarn build; fi
+          else
+            if has lint; then npm run lint; fi
+            if has typecheck; then npm run typecheck; fi
+            if has test; then npm test; fi
+            if has build; then npm run build; fi
+          fi
+
+      - name: Python
+        if: ${{ hashFiles('pyproject.toml', 'requirements.txt', 'requirements-dev.txt', 'setup.py', 'Pipfile', 'setup.cfg') != '' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python verify
+        if: ${{ hashFiles('pyproject.toml', 'requirements.txt', 'requirements-dev.txt', 'setup.py', 'Pipfile', 'setup.cfg') != '' }}
+        run: |
+          set -euo pipefail
+          python -m compileall -q -x '/(\.git|venv|\.venv|node_modules|__pycache__)/' .
+          if [ -f requirements.txt ]; then pip install -q -r requirements.txt || true; fi
+          if [ -f pyproject.toml ]; then pip install -q -e . || true; fi
+          if [ -d tests ] || [ -d test ]; then
+            pip install -q pytest
+            pytest -q
+          fi
+
+      - name: Go
+        if: ${{ hashFiles('go.mod') != '' }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Go verify
+        if: ${{ hashFiles('go.mod') != '' }}
+        run: |
+          go test ./...
+
+      - name: Checkout sanity
+        if: ${{ hashFiles('package.json', 'pyproject.toml', 'requirements.txt', 'setup.py', 'Pipfile', 'go.mod') == '' }}
+        run: echo "no detected app stack; checkout succeeded"
